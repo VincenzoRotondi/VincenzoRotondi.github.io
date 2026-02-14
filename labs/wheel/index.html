@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Wheel of Fate</title>
+    <style>
+        :root {
+            --bg-color: #0e0e0e;
+            --accent-color: #0078d4;
+            --text-color: #ffffff;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        .container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            max-width: 90vw;
+            max-height: 90vw;
+            border-radius: 50%;
+            border: 8px solid #333;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+        }
+        .arrow {
+            position: absolute;
+            right: -20px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0; 
+            height: 0; 
+            border-top: 20px solid transparent;
+            border-bottom: 20px solid transparent;
+            border-right: 40px solid #ff4444;
+            z-index: 10;
+        }
+        #spinBtn {
+            margin-top: 30px;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: white;
+            background-color: var(--accent-color);
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: transform 0.1s, background-color 0.3s;
+        }
+        #spinBtn:hover { background-color: #005a9e; }
+        #spinBtn:disabled { background-color: #444; cursor: not-allowed; }
+        #result {
+            margin-top: 20px;
+            height: 40px;
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #00ff00;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="arrow"></div>
+        <canvas id="wheelCanvas" width="500" height="500"></canvas>
+    </div>
+
+    <div id="result"></div>
+    <button id="spinBtn">SPIN THE WHEEL</button>
+
+    <script>
+        class SelectionWheel {
+            constructor(canvasId, options) {
+                this.canvas = document.getElementById(canvasId);
+                this.ctx = this.canvas.getContext("2d");
+                this.options = options;
+                this.currentAngle = 0;
+                this.isSpinning = false;
+                this.particles = [];
+                this.draw();
+            }
+
+            draw() {
+                const size = this.options.length;
+                const sliceAngle = (2 * Math.PI) / size;
+                const centerX = this.canvas.width / 2;
+                const centerY = this.canvas.height / 2;
+                const radius = centerX;
+
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.options.forEach((opt, i) => {
+                    const angle = this.currentAngle + i * sliceAngle;
+                    this.ctx.beginPath();
+                    this.ctx.fillStyle = opt.color;
+                    this.ctx.moveTo(centerX, centerY);
+                    this.ctx.arc(centerX, centerY, radius, angle, angle + sliceAngle);
+                    this.ctx.lineTo(centerX, centerY);
+                    this.ctx.fill();
+                    this.ctx.strokeStyle = "rgba(0,0,0,0.2)";
+                    this.ctx.stroke();
+
+                    this.ctx.save();
+                    this.ctx.translate(centerX, centerY);
+                    this.ctx.rotate(angle + sliceAngle / 2);
+                    this.ctx.textAlign = "right";
+                    this.ctx.fillStyle = "white";
+                    this.ctx.font = "bold 18px Arial";
+                    this.ctx.shadowBlur = 4;
+                    this.ctx.shadowColor = "black";
+                    this.ctx.fillText(opt.label, radius - 30, 10);
+                    this.ctx.restore();
+                });
+
+                if (this.particles.length > 0) {
+                    this.updateParticles();
+                }
+            }
+
+            createParticles() {
+                for (let i = 0; i < 50; i++) {
+                    this.particles.push({
+                        x: 250,
+                        y: 250,
+                        vx: (Math.random() - 0.5) * 10,
+                        vy: (Math.random() - 0.5) * 10,
+                        size: Math.random() * 5 + 2,
+                        color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+                        life: 1.0
+                    });
+                }
+            }
+
+            updateParticles() {
+                this.particles.forEach((p, i) => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.life -= 0.02;
+                    this.ctx.fillStyle = p.color;
+                    this.ctx.globalAlpha = p.life;
+                    this.ctx.beginPath();
+                    this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    this.ctx.globalAlpha = 1.0;
+                    if (p.life <= 0) this.particles.splice(i, 1);
+                });
+                if (this.particles.length > 0) {
+                    requestAnimationFrame(() => this.draw());
+                }
+            }
+
+            spin(onComplete) {
+                if (this.isSpinning) return;
+                this.isSpinning = true;
+                const duration = 5000;
+                const startRotation = this.currentAngle;
+                const extraRotation = (Math.PI * 12) + (Math.random() * Math.PI * 6);
+                const startTime = performance.now();
+
+                const animate = (now) => {
+                    const elapsed = now - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+                    const easeOut = 1 - Math.pow(1 - progress, 4);
+                    this.currentAngle = startRotation + (extraRotation * easeOut);
+                    this.draw();
+                    if (progress < 1) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        this.isSpinning = false;
+                        onComplete(this.getWinner());
+                    }
+                };
+                requestAnimationFrame(animate);
+            }
+
+            getWinner() {
+                const size = this.options.length;
+                const sliceAngle = (2 * Math.PI) / size;
+                let normalizedAngle = this.currentAngle % (2 * Math.PI);
+                if (normalizedAngle < 0) normalizedAngle += (2 * Math.PI);
+                const index = Math.floor((2 * Math.PI - normalizedAngle) / sliceAngle) % size;
+                return this.options[index].label;
+            }
+        }
+
+        const wheelOptions = [
+            { label: "C# Code 💻", color: "#178600" },
+            { label: "TS Refactor 🛠️", color: "#3178c6" },
+            { label: "SQL Query 📊", color: "#a91d22" },
+            { label: "Bug Hunt 🐞", color: "#d13438" },
+            { label: "Coffee Break ☕", color: "#6f4e37" },
+            { label: "Unit Test 🧪", color: "#00b7c3" },
+            { label: "Deploy Day 🚀", color: "#ff8c00" },
+            { label: "Pizza Time 🍕", color: "#e81123" }
+        ];
+
+        const wheel = new SelectionWheel("wheelCanvas", wheelOptions);
+        const btn = document.getElementById("spinBtn");
+        const resultDiv = document.getElementById("result");
+
+        btn.addEventListener("click", () => {
+            btn.disabled = true;
+            resultDiv.innerText = "Calculating probabilities...";
+            wheel.spin((winner) => {
+                resultDiv.innerText = `Result: ${winner}`;
+                if (winner.includes("Coffee") || winner.includes("Pizza")) {
+                    wheel.createParticles();
+                    wheel.draw();
+                }
+                btn.disabled = false;
+            });
+        });
+    </script>
+</body>
+</html>
