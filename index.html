@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Index</title>
+    <title>LABS_CORE_INTERFACE</title>
     <style>
         body {
             background-color: #0e0e0e;
@@ -16,28 +16,87 @@
             height: 100vh;
             margin: 0;
             user-select: none;
+            overflow: hidden;
+        }
+
+        /* Effetto Scanline leggero */
+        body::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
+                linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 2;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
         }
 
         .container {
             text-align: center;
+            width: 350px;
+            position: relative;
+            z-index: 3;
         }
 
         .status {
             color: #0078d4;
             font-weight: bold;
+            text-shadow: 0 0 5px #0078d4;
+        }
+
+        .lab-section {
+            margin-top: 30px;
+            text-align: left;
+            border-top: 1px solid #333;
+            padding-top: 15px;
+        }
+
+        .lab-link {
+            color: #00ff41;
+            text-decoration: none;
+            display: block;
+            margin: 8px 0;
+            padding: 2px 5px;
+            transition: all 0.2s;
+        }
+
+        .lab-link:hover {
+            background-color: #00ff41;
+            color: #000;
+            transform: translateX(10px);
+        }
+
+        .comment {
+            color: #444;
+            font-size: 0.75rem;
+            margin-bottom: 5px;
+            display: block;
+            text-transform: uppercase;
         }
     </style>
 </head>
 
 <body>
     <div class="container">
-        <p>[ <span class="status">SYSTEM_READY</span> ]</p>
-        <p>Nothing here. Yet.</p>
+        <p>[ <span class="status">LABS_ACTIVE_SESSION</span> ]</p>
 
-        <div style="margin-top: 30px; text-align: left; border-top: 1px solid #222; padding-top: 20px;">
-            <p style="color: #666; font-size: 0.8rem;">// AVAILABLE_LABS</p>
-            <p>> <a href="./labs/wheel/" style="color: #00ff41; text-decoration: none;">[ RUN: wheel_of_fate ]</a></p>
-            <p>> <a href="./labs/snake/" style="color: #00ff41; text-decoration: none;">[ RUN: snake ]</a></p>
+        <div class="lab-section">
+            <span class="comment">// TYPE: RASTER_CANVAS_2D</span>
+            <a href="./labs/wheel/" class="lab-link">> run wheel_of_fate.bin</a>
+            <a href="./labs/snake/" class="lab-link">> run snake_core.sys</a>
+        </div>
+
+        <div class="lab-section">
+            <span class="comment">// TYPE: WEBGL_SPATIAL_3D</span>
+            <a href="./3d-labs/stacker/" class="lab-link">> run neon_stacker.env</a>
+        </div>
+
+        <div style="margin-top: 40px; color: #222; font-size: 0.7rem;">
+            [CTRL+C] TO_TERMINATE_SESSION
         </div>
     </div>
 </body>

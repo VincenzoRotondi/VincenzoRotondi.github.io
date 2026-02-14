@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLOCK_STACKER_PRO</title>
+    <style>
+        body {
+            margin: 0;
+            background: #1a1a1a;
+            color: #00ff41;
+            font-family: 'Consolas', monospace;
+            overflow: hidden;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            text-shadow: 0 0 5px rgba(0, 255, 65, 0.5);
+            z-index: 10;
+        }
+
+        .status {
+            border: 1px solid #00ff41;
+            padding: 2px 10px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        #msg {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: #888;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui">
+        <p>[ <span class="status" id="state">System_Active</span> ]</p>
+        <p>LEVEL: <span id="score">0</span></p>
+    </div>
+    <div id="msg">CLICK OR SPACE TO STACK</div>
+
+    <script type="module">
+        import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
+
+        class NeonStacker {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x1a1a1a);
+
+                this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                document.body.appendChild(this.renderer.domElement);
+
+                this.boxHeight = 1;
+                this.stack = [];
+                this.gameActive = true;
+                this.speed = 0.12;
+
+                this.init();
+                window.addEventListener('mousedown', () => this.placeBlock());
+                window.addEventListener('keydown', (e) => { if (e.code === 'Space') this.placeBlock(); });
+                window.addEventListener('resize', () => this.onResize());
+                this.animate();
+            }
+
+            init() {
+                const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+                this.scene.add(ambient);
+                const light = new THREE.DirectionalLight(0xffffff, 0.8);
+                light.position.set(10, 20, 10);
+                this.scene.add(light);
+
+                this.addLayer(0, 0, 6, 6);
+                this.newLayer();
+
+                this.camera.position.set(12, 12, 12);
+                this.camera.lookAt(0, 0, 0);
+            }
+
+            addLayer(x, z, width, depth) {
+                const y = this.stack.length * this.boxHeight;
+                const geom = new THREE.BoxGeometry(width, this.boxHeight, depth);
+
+                const hue = (this.stack.length * 25) % 360;
+                const color = new THREE.Color(`hsl(${hue}, 70%, 50%)`);
+
+                const mat = new THREE.MeshPhongMaterial({ color: color });
+                const mesh = new THREE.Mesh(geom, mat);
+                mesh.position.set(x, y, z);
+                this.scene.add(mesh);
+                this.stack.push({ mesh, width, depth });
+            }
+
+            newLayer() {
+                const top = this.stack[this.stack.length - 1];
+                const direction = this.stack.length % 2 === 0 ? 'x' : 'z';
+                const x = direction === 'x' ? -10 : top.mesh.position.x;
+                const z = direction === 'z' ? -10 : top.mesh.position.z;
+
+                this.addLayer(x, z, top.width, top.depth);
+                this.current = this.stack[this.stack.length - 1];
+                this.currentDirection = direction;
+            }
+
+            placeBlock() {
+                if (!this.gameActive) return;
+
+                const top = this.current;
+                const prev = this.stack[this.stack.length - 2];
+                const direction = this.currentDirection;
+
+                const delta = top.mesh.position[direction] - prev.mesh.position[direction];
+                const size = direction === 'x' ? top.width : top.depth;
+                const overlap = size - Math.abs(delta);
+
+                if (overlap > 0) {
+                    const newPos = prev.mesh.position[direction] + delta / 2;
+
+                    if (direction === 'x') {
+                        top.width = overlap;
+                        top.mesh.scale.x = overlap / size;
+                        top.mesh.position.x = newPos;
+                    } else {
+                        top.depth = overlap;
+                        top.mesh.scale.z = overlap / size;
+                        top.mesh.position.z = newPos;
+                    }
+
+                    document.getElementById('score').innerText = this.stack.length - 1;
+                    this.speed += 0.003;
+                    this.moveCamera();
+                    this.newLayer();
+                } else {
+                    this.gameOver();
+                }
+            }
+
+            moveCamera() {
+                const targetY = this.stack.length + 10;
+
+                this.camera.position.y = targetY;
+                this.camera.lookAt(0, targetY - 10, 0);
+            }
+
+            onResize() {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+
+            gameOver() {
+                this.gameActive = false;
+                document.getElementById('state').innerText = "Stack_Limit_Reached";
+                document.getElementById('state').style.color = "#ff4444";
+                setTimeout(() => location.reload(), 2000);
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                if (this.gameActive && this.stack.length > 1) {
+                    this.current.mesh.position[this.currentDirection] += this.speed;
+                    if (Math.abs(this.current.mesh.position[this.currentDirection]) > 12) {
+                        this.speed *= -1;
+                    }
+                }
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        new NeonStacker();
+    </script>
+</body>
+
+</html>
