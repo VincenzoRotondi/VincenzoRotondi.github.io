@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Base64 Terminal</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #00ff41; padding: 20px; }
+        .container { max-width: 1000px; margin: auto; }
+        h3 { border-bottom: 1px solid #00ff41; padding-bottom: 10px; text-transform: uppercase; }
+        
+        .tabs { display: flex; border: 1px solid #00ff41; margin-bottom: 15px; background: #00ff41; gap: 2px; }
+        .tab { flex: 1; padding: 12px; background: #111; color: #00ff41; border: none; cursor: pointer; font-weight: bold; text-transform: uppercase; }
+        .tab.active { background: #00ff41; color: #000; }
+        
+        textarea { width: 100%; height: 200px; background: #050505; color: #00ff41; border: 1px solid #00ff41; padding: 15px; box-sizing: border-box; outline: none; font-size: 0.9rem; display: block; }
+        
+        .file-overlay { margin-top: 10px; display: flex; gap: 10px; align-items: center; }
+        .file-label { padding: 8px 15px; background: #003300; border: 1px dashed #00ff41; cursor: pointer; font-size: 0.8rem; color: #00ff41; }
+        .file-label:hover { background: #00ff41; color: #000; }
+        #fileInput { display: none; }
+
+        .controls { margin: 15px 0; display: flex; gap: 10px; }
+        .btn-exec { flex: 1; padding: 15px; background: #003300; color: #00ff41; border: 1px solid #00ff41; cursor: pointer; font-weight: bold; text-transform: uppercase; }
+        .btn-exec:hover { background: #00ff41; color: #000; }
+        .btn-clear { padding: 0 20px; background: #000; color: #ff0000; border: 1px solid #ff0000; cursor: pointer; }
+
+        #result { margin-top: 20px; display: none; }
+        .badge { display: inline-block; padding: 4px 10px; background: #005500; color: #fff; font-size: 0.8rem; margin-bottom: 8px; }
+        
+        .viewer { background: #111; border: 1px solid #333; padding: 15px; min-height: 100px; display: flex; align-items: center; justify-content: center; position: relative; overflow: auto; }
+        
+        img { max-width: 100%; height: auto; image-rendering: pixelated; border: 1px solid #00ff41; 
+            background-image: linear-gradient(45deg, #1a1a1a 25%, transparent 25%), linear-gradient(-45deg, #1a1a1a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #1a1a1a 75%), linear-gradient(-45deg, transparent 75%, #1a1a1a 75%);
+            background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; }
+            
+        pre { color: #00ff41; margin: 0; white-space: pre-wrap; font-size: 0.85rem; width: 100%; }
+        iframe { width: 100%; height: 600px; border: 1px solid #333; }
+        .copy-tag { position: absolute; top: 5px; right: 5px; background: #003300; color: #00ff41; border: 1px solid #00ff41; font-size: 0.6rem; cursor: pointer; padding: 3px; z-index: 5; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h3>Base64 Encode/Decode Terminal</h3>
+    
+    <div class="tabs">
+        <button id="tabDec" class="tab active" onclick="setMode('decode')">Decode & Analyze</button>
+        <button id="tabEnc" class="tab" onclick="setMode('encode')">Encode</button>
+    </div>
+
+    <textarea id="input" placeholder="Paste Base64 or drag & drop a file here..."></textarea>
+
+    <div class="file-overlay">
+        <label for="fileInput" class="file-label">📁 UPLOAD FILE (IMG/PDF)</label>
+        <input type="file" id="fileInput" onchange="handleFileUpload(this.files[0])">
+        <span id="fileName" style="font-size: 0.7rem; color: #444;">No file selected</span>
+    </div>
+    
+    <div class="controls">
+        <button class="btn-exec" onclick="run()">Execute Transformation</button>
+        <button class="btn-clear" onclick="reset()">Reset</button>
+    </div>
+
+    <div id="result">
+        <div id="meta" class="badge"></div>
+        <div class="viewer">
+            <button class="copy-tag" onclick="copy()">COPY TO CLIPBOARD</button>
+            <div id="content" style="width: 100%;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let mode = 'decode';
+    let lastBlobUrl = null;
+
+    function setMode(m) {
+        mode = m;
+        document.getElementById('tabDec').classList.toggle('active', mode === 'decode');
+        document.getElementById('tabEnc').classList.toggle('active', mode === 'encode');
+        document.getElementById('input').placeholder = mode === 'decode' ? 'Paste Base64...' : 'Enter text or drag a file to encode...';
+        document.getElementById('result').style.display = 'none';
+    }
+
+    function handleFileUpload(file) {
+        if (!file) return;
+        document.getElementById('fileName').textContent = file.name;
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const b64 = e.target.result.split(',')[1];
+            document.getElementById('input').value = b64;
+            setMode('encode'); 
+            run();
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function run() {
+        const val = document.getElementById('input').value.trim();
+        if (!val) return;
+
+        const resDiv = document.getElementById('result');
+        const meta = document.getElementById('meta');
+        const content = document.getElementById('content');
+
+        if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+        resDiv.style.display = 'block';
+        content.innerHTML = '';
+
+        if (mode === 'decode') {
+            try {
+                const b64 = val.replace(/^data:.*?;base64,/, '').replace(/[^A-Za-z0-9+/=]/g, '');
+                const bin = atob(b64);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+                const hex = Array.from(bytes.slice(0, 4)).map(b => b.toString(16).padStart(2,'0')).join('').toUpperCase();
+                let type = 'text/plain';
+                let label = 'TEXT/JSON';
+
+                if (hex === '89504E47') { type = 'image/png'; label = 'PNG'; }
+                else if (hex.startsWith('FFD8FF')) { type = 'image/jpeg'; label = 'JPG'; }
+                else if (hex === '47494638') { type = 'image/gif'; label = 'GIF'; }
+                else if (hex === '25504446') { type = 'application/pdf'; label = 'PDF'; }
+
+                if (type.startsWith('image/')) {
+                    const blob = new Blob([bytes], { type });
+                    lastBlobUrl = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.src = lastBlobUrl;
+                    if (label === 'PNG' && bytes.length > 24) {
+                        const view = new DataView(bytes.buffer);
+                        label += ` [${view.getUint32(16)}x${view.getUint32(20)} px]`;
+                    }
+                    content.appendChild(img);
+                } else if (type === 'application/pdf') {
+                    const blob = new Blob([bytes], { type });
+                    lastBlobUrl = URL.createObjectURL(blob);
+                    const f = document.createElement('iframe');
+                    f.src = lastBlobUrl;
+                    content.appendChild(f);
+                } else {
+                    const text = new TextDecoder().decode(bytes);
+                    const pre = document.createElement('pre');
+                    try {
+                        pre.textContent = JSON.stringify(JSON.parse(text), null, 4);
+                        label = 'JSON';
+                    } catch(e) { pre.textContent = text; }
+                    content.appendChild(pre);
+                }
+                meta.textContent = `ANALYSIS: ${label}`;
+            } catch(e) {
+                meta.textContent = 'ERROR';
+                content.innerHTML = '<span style="color:red">Invalid Base64 sequence.</span>';
+            }
+        } else {
+            // ENCODE
+            meta.textContent = 'OUTPUT: BASE64 GENERATED';
+            // Se l'area input contiene già un B64 (da file upload), lo mostriamo, altrimenti codifichiamo il testo
+            let b64 = val;
+            // Semplice check: se non è base64, codifichiamo come testo
+            if (!/^[A-Za-z0-9+/=]+$/.test(val)) {
+                b64 = btoa(unescape(encodeURIComponent(val)));
+            }
+            content.innerHTML = `<pre>${b64.length > 1000 ? b64.substring(0, 1000) + '...' : b64}</pre>`;
+            document.getElementById('input').value = b64;
+        }
+    }
+
+    function reset() {
+        document.getElementById('input').value = '';
+        document.getElementById('fileName').textContent = 'No file selected';
+        document.getElementById('result').style.display = 'none';
+        if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+    }
+
+    function copy() {
+        const text = document.getElementById('input').value;
+        navigator.clipboard.writeText(text).then(() => alert("Copied to clipboard!"));
+    }
+
+    const area = document.getElementById('input');
+    area.addEventListener('dragover', (e) => { e.preventDefault(); area.style.borderColor = '#fff'; });
+    area.addEventListener('dragleave', () => { area.style.borderColor = '#00ff41'; });
+    area.addEventListener('drop', (e) => {
+        e.preventDefault();
+        area.style.borderColor = '#00ff41';
+        handleFileUpload(e.dataTransfer.files[0]);
+    });
+</script>
+
+</body>
+</html>
