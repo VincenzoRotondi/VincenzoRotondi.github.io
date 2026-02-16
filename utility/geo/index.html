@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Geoprocessor Terminal</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #00ff41; padding: 20px; margin: 0; }
+        .container { max-width: 1400px; margin: auto; }
+        .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
+        h3 { color: #00ff41; text-transform: uppercase; border-bottom: 1px solid #00ff41; padding-bottom: 5px; margin-top: 0; }
+        
+        select, input { width: 100%; background: #111; color: #00ff41; border: 1px solid #00ff41; padding: 8px; margin-bottom: 8px; box-sizing: border-box; outline: none; }
+        button { width: 100%; padding: 10px; cursor: pointer; background: #003300; color: #00ff41; border: 1px solid #00ff41; font-weight: bold; text-transform: uppercase; margin-top: 10px; }
+        button:hover { background: #00ff41; color: #000; }
+        
+        #map { height: 750px; border: 1px solid #00ff41; cursor: crosshair; background: #000; }
+        #e { color: #ffff00; font-weight: bold; margin: 10px 0; min-height: 20px; font-size: 0.8rem; }
+        .result-box { background: #111; padding: 15px; border: 1px dashed #00ff41; margin-top: 10px; line-height: 1.6; position: relative; }
+        .hidden { display: none; }
+        label { font-size: 0.75rem; display: block; margin-top: 5px; color: #888; }
+        .alt-highlight { color: #fff; font-weight: bold; }
+        .copy-btn { position: absolute; top: 5px; right: 5px; font-size: 0.6rem; padding: 3px; width: auto; margin: 0; }
+        
+        .search-container { position: relative; }
+        .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #111; border: 1px solid #00ff41; z-index: 1000; max-height: 200px; overflow-y: auto; }
+        .suggestion-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #222; font-size: 0.8rem; }
+        .suggestion-item:hover { background: #003300; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h3>Geoprocessor Terminal</h3>
+    <div class="grid">
+        <div class="panel">
+            <label>Address (Search or Click Map)</label>
+            <div class="search-container">
+                <input type="text" id="addressInput" placeholder="Click map or type to search..." autocomplete="off">
+                <div id="suggestions" class="suggestions hidden"></div>
+            </div>
+
+            <label style="margin-top: 15px;">Map Layer</label>
+            <select id="mapSelect" onchange="changeMap()">
+                <option value="carto">CartoDB Dark (Default)</option>
+                <option value="osm">Standard (OpenStreetMap)</option>
+                <option value="topo">Topographic (OpenTopoMap)</option>
+                <option value="sat">Satellite (Esri Imagery)</option>
+            </select>
+
+            <label>Source SRS</label>
+            <select id="srcSelect" onchange="toggleCustom('src')">
+                <option value="4326">WGS 84 (EPSG:4326)</option>
+                <option value="3003">Monte Mario / Italy 1 (EPSG:3003)</option>
+                <option value="3004">Monte Mario / Italy 2 (EPSG:3004)</option>
+                <option value="32632">UTM 32N (WGS84) (EPSG:32632)</option>
+                <option value="32633">UTM 33N (WGS84) (EPSG:32633)</option>
+                <option value="custom">-- Custom EPSG --</option>
+            </select>
+            <input type="text" id="srcCustom" class="hidden" placeholder="Enter EPSG Code">
+
+            <label>Target SRS</label>
+            <select id="dstSelect" onchange="toggleCustom('dst')">
+                <option value="AUTO_UTM">Auto-Detect UTM (WGS84)</option>
+                <option value="4326">WGS 84 (EPSG:4326)</option>
+                <option value="3003">Monte Mario / Italy 1 (EPSG:3003)</option>
+                <option value="3004">Monte Mario / Italy 2 (EPSG:3004)</option>
+                <option value="custom">-- Custom EPSG --</option>
+            </select>
+            <input type="text" id="dstCustom" class="hidden" placeholder="Enter EPSG Code">
+
+            <label>X / Longitude</label>
+            <input type="text" id="srcX" value="12.4924">
+            <label>Y / Latitude</label>
+            <input type="text" id="srcY" value="41.8902">
+
+            <div style="display:flex; align-items:center; gap:10px; margin:10px 0; font-size:0.8rem;">
+                <input type="checkbox" id="fetchAlt" checked style="width:auto; margin:0;">
+                <label for="fetchAlt" style="margin:0; color:#00ff41;">Fetch Altitude</label>
+            </div>
+
+            <button onclick="transform()">Execute Transformation</button>
+            <div id="e"></div>
+
+            <div class="result-box">
+                <button class="copy-btn" onclick="copyResult()">COPY</button>
+                <div style="font-size: 0.7rem; color: #00ff41; margin-bottom: 5px; border-bottom: 1px solid #333;">FINAL OUTPUT:</div>
+                <div id="res">N/A</div>
+            </div>
+        </div>
+        <div id="map"></div>
+    </div>
+</div>
+
+<script>
+    const layers = {
+        carto: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; CARTO' }),
+        osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OSM' }),
+        topo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { attribution: 'SRTM | OpenTopoMap' }),
+        sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: '&copy; Esri' })
+    };
+
+    const map = L.map('map', { layers: [layers.carto] }).setView([41.8902, 12.4924], 6);
+    let marker = L.marker([41.8902, 12.4924]).addTo(map);
+
+    const staticDefs = {
+        "4326": "+proj=longlat +datum=WGS84 +no_defs",
+        "3003": "+proj=tmerc +lat_0=0 +lon_0=9 +k=0.9996 +x_0=1500000 +y_0=0 +ellps=intl +units=m +towgs84=-104.1,-49.1,-9.9,0.971,-2.917,0.714,-11.68 +no_defs",
+        "3004": "+proj=tmerc +lat_0=0 +lon_0=15 +k=0.9996 +x_0=2520000 +y_0=0 +ellps=intl +units=m +towgs84=-104.1,-49.1,-9.9,0.971,-2.917,0.714,-11.68 +no_defs",
+        "32632": "+proj=utm +zone=32 +datum=WGS84 +units=m +no_defs",
+        "32633": "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs"
+    };
+
+    const addrInput = document.getElementById('addressInput');
+    const sugBox = document.getElementById('suggestions');
+    const errBox = document.getElementById('e');
+    let debounceTimer;
+
+    async function resolveAddress(lat, lon) {
+        errBox.textContent = ">>> RESOLVING ADDRESS...";
+        try {
+            const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+            const d = await r.json();
+            addrInput.value = d.display_name || "Unknown Location";
+            errBox.textContent = "";
+        } catch (err) {
+            errBox.textContent = ">>> GEOCODING ERROR";
+        }
+    }
+
+    addrInput.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        const q = addrInput.value;
+        if (q.length < 3) { sugBox.classList.add('hidden'); return; }
+        debounceTimer = setTimeout(async () => {
+            try {
+                const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5`);
+                const d = await r.json();
+                sugBox.innerHTML = '';
+                if (d.length > 0) {
+                    sugBox.classList.remove('hidden');
+                    d.forEach(item => {
+                        const div = document.createElement('div');
+                        div.className = 'suggestion-item';
+                        div.textContent = item.display_name;
+                        div.onclick = () => {
+                            addrInput.value = item.display_name;
+                            sugBox.classList.add('hidden');
+                            updateInputs(item.lat, item.lon);
+                        };
+                        sugBox.appendChild(div);
+                    });
+                }
+            } catch (e) {}
+        }, 300);
+    });
+
+    function updateInputs(lat, lon) {
+        document.getElementById('srcSelect').value = "4326";
+        toggleCustom('src');
+        document.getElementById('srcX').value = parseFloat(lon).toFixed(6);
+        document.getElementById('srcY').value = parseFloat(lat).toFixed(6);
+        transform();
+    }
+
+    map.on('click', function (e) {
+        const { lat, lng } = e.latlng;
+        updateInputs(lat, lng);
+        resolveAddress(lat, lng);
+    });
+
+    function changeMap() {
+        const val = document.getElementById('mapSelect').value;
+        Object.values(layers).forEach(l => map.removeLayer(l));
+        layers[val].addTo(map);
+    }
+
+    function toggleCustom(type) {
+        const sel = document.getElementById(type + 'Select');
+        const cus = document.getElementById(type + 'Custom');
+        cus.className = (sel.value === 'custom') ? '' : 'hidden';
+    }
+
+    async function fetchDef(code) {
+        if (staticDefs[code]) return staticDefs[code];
+        const r = await fetch(`https://epsg.io/${code}.js`);
+        if (!r.ok) throw new Error();
+        const t = await r.text();
+        const m = t.match(/proj4\.defs\("EPSG:\d+",\s*"(.+?)"\)/);
+        return m ? m[1] : null;
+    }
+
+    async function transform() {
+        const res = document.getElementById('res');
+        const sSel = document.getElementById('srcSelect').value;
+        const dSel = document.getElementById('dstSelect').value;
+        const doAlt = document.getElementById('fetchAlt').checked;
+
+        let sE = sSel === 'custom' ? document.getElementById('srcCustom').value : sSel;
+        let dE = dSel === 'custom' ? document.getElementById('dstCustom').value : dSel;
+        const x = parseFloat(document.getElementById('srcX').value);
+        const y = parseFloat(document.getElementById('srcY').value);
+
+        if (isNaN(x) || isNaN(y)) return;
+
+        try {
+            const sDef = await fetchDef(sE);
+            const wgsCoords = sE === "4326" ? [x, y] : proj4(sDef, staticDefs["4326"], [x, y]);
+
+            let utmInfo = "";
+            if (dSel === "AUTO_UTM") {
+                const zone = Math.floor((wgsCoords[0] + 180) / 6) + 1;
+                dE = (32600 + zone).toString();
+                utmInfo = `<br>Zone: ${zone}N (EPSG:${dE})`;
+            }
+
+            const dDef = await fetchDef(dE);
+            proj4.defs(`EPSG:${sE}`, sDef);
+            proj4.defs(`EPSG:${dE}`, dDef);
+
+            const pt = proj4(`EPSG:${sE}`, `EPSG:${dE}`, [x, y]);
+
+            res.innerHTML = `X: ${pt[0].toFixed(3)}\nY: ${pt[1].toFixed(3)}${utmInfo}<div id="altRow">${doAlt ? '\nALT: Loading...' : ''}</div>`.replace(/\n/g, '<br>');
+
+            marker.setLatLng([wgsCoords[1], wgsCoords[0]]);
+            map.panTo([wgsCoords[1], wgsCoords[0]]);
+
+            if (doAlt) {
+                fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${wgsCoords[1]},${wgsCoords[0]}`)
+                    .then(r => r.json())
+                    .then(d => {
+                        const alt = d.results[0].elevation;
+                        document.getElementById('altRow').innerHTML = `<br>ALT: <span class="alt-highlight">${alt} m</span>`;
+                    })
+                    .catch(() => {
+                        document.getElementById('altRow').innerHTML = `<br>ALT: <span style="color:red">Error</span>`;
+                    });
+            }
+        } catch (v) {
+            errBox.textContent = ">>> ERROR: TRANSFORMATION FAILED";
+        }
+    }
+
+    function copyResult() {
+        const text = document.getElementById('res').innerText + "\nAddress: " + addrInput.value;
+        navigator.clipboard.writeText(text);
+    }
+
+    document.addEventListener('click', (e) => {
+        if (e.target !== addrInput) sugBox.classList.add('hidden');
+    });
+</script>
+</body>
+</html>
