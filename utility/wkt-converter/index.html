@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WKT Converter Terminal</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #00ff41; padding: 20px; margin: 0; }
+        .container { max-width: 1400px; margin: auto; }
+        .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
+        h3 { color: #00ff41; text-transform: uppercase; border-bottom: 1px solid #00ff41; padding-bottom: 5px; margin-top: 0; }
+        
+        select, input, textarea { width: 100%; background: #111; color: #00ff41; border: 1px solid #00ff41; padding: 8px; margin-bottom: 8px; box-sizing: border-box; outline: none; font-family: 'Courier New', monospace; }
+        textarea { resize: vertical; min-height: 80px; }
+        button { width: 100%; padding: 10px; cursor: pointer; background: #003300; color: #00ff41; border: 1px solid #00ff41; font-weight: bold; text-transform: uppercase; margin-top: 10px; }
+        button:hover { background: #00ff41; color: #000; }
+        
+        #map { height: 750px; border: 1px solid #00ff41; cursor: crosshair; background: #000; }
+        #e { color: #ffff00; font-weight: bold; margin: 10px 0; min-height: 20px; font-size: 0.8rem; }
+        .result-box { background: #111; padding: 15px; border: 1px dashed #00ff41; margin-top: 10px; line-height: 1.6; position: relative; }
+        .hidden { display: none; }
+        label { font-size: 0.75rem; display: block; margin-top: 10px; color: #888; font-weight: bold; }
+        .alt-highlight { color: #fff; font-weight: bold; }
+        .copy-btn { position: absolute; top: 5px; right: 5px; font-size: 0.6rem; padding: 3px; width: auto; margin: 0; }
+        
+        .section-header { font-size: 0.85rem; color: #00ff41; font-weight: bold; margin-top: 15px; padding-bottom: 5px; border-bottom: 1px solid #333; }
+        .button-group { display: flex; gap: 5px; margin-top: 8px; }
+        .button-group button { flex: 1; }
+        
+        .result-text { font-size: 0.78rem; word-break: break-all; color: #00ff41; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h3>WKT Converter Terminal</h3>
+    <div class="grid">
+        <div class="panel">
+            <div class="section-header">Source WKT</div>
+            <textarea id="srcWkt" placeholder="Paste WKT or draw on map..." spellcheck="false"></textarea>
+            
+            <label>Source SRS</label>
+            <select id="srcSelect" onchange="toggleCustom('src')">
+                <option value="4326">WGS 84 (EPSG:4326)</option>
+                <option value="3003">Monte Mario / Italy 1 (EPSG:3003)</option>
+                <option value="3004">Monte Mario / Italy 2 (EPSG:3004)</option>
+                <option value="32632">UTM 32N (WGS84) (EPSG:32632)</option>
+                <option value="32633">UTM 33N (WGS84) (EPSG:32633)</option>
+                <option value="custom">-- Custom EPSG --</option>
+            </select>
+            <input type="text" id="srcCustom" class="hidden" placeholder="Enter EPSG Code">
+
+            <div class="section-header">Target SRS</div>
+            <select id="dstSelect" onchange="toggleCustom('dst')">
+                <option value="AUTO_UTM">Auto-Detect UTM (WGS84)</option>
+                <option value="4326">WGS 84 (EPSG:4326)</option>
+                <option value="3003">Monte Mario / Italy 1 (EPSG:3003)</option>
+                <option value="3004">Monte Mario / Italy 2 (EPSG:3004)</option>
+                <option value="32632">UTM 32N (WGS84) (EPSG:32632)</option>
+                <option value="32633">UTM 33N (WGS84) (EPSG:32633)</option>
+                <option value="custom">-- Custom EPSG --</option>
+            </select>
+            <input type="text" id="dstCustom" class="hidden" placeholder="Enter EPSG Code">
+
+            <label style="margin-top: 15px;">Map Controls</label>
+            <div class="button-group">
+                <button onclick="clearDrawings()" style="background: #330000;">Clear Drawing</button>
+                <button onclick="zoomToGeom()">Zoom To Geom</button>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:10px; margin:10px 0; font-size:0.8rem;">
+                <input type="checkbox" id="fetchAlt" style="width:auto; margin:0;">
+                <label for="fetchAlt" style="margin:0; color:#00ff41;">Add Z (Altitude)</label>
+            </div>
+
+            <div id="e"></div>
+
+            <div class="result-box">
+                <button class="copy-btn" onclick="copyResult()">COPY</button>
+                <div style="font-size: 0.7rem; color: #00ff41; margin-bottom: 5px; border-bottom: 1px solid #333;">CONVERTED WKT:</div>
+                <div id="res" class="result-text">N/A</div>
+            </div>
+        </div>
+        <div id="map"></div>
+    </div>
+</div>
+
+<script>
+    const map = L.map('map').setView([41.8902, 12.4924], 6);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; CARTO', maxZoom: 19 }).addTo(map);
+
+    const staticDefs = {
+        "4326": "+proj=longlat +datum=WGS84 +no_defs",
+        "3003": "+proj=tmerc +lat_0=0 +lon_0=9 +k=0.9996 +x_0=1500000 +y_0=0 +ellps=intl +units=m +towgs84=-104.1,-49.1,-9.9,0.971,-2.917,0.714,-11.68 +no_defs",
+        "3004": "+proj=tmerc +lat_0=0 +lon_0=15 +k=0.9996 +x_0=2520000 +y_0=0 +ellps=intl +units=m +towgs84=-104.1,-49.1,-9.9,0.971,-2.917,0.714,-11.68 +no_defs",
+        "32632": "+proj=utm +zone=32 +datum=WGS84 +units=m +no_defs",
+        "32633": "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs"
+    };
+
+    const featureGroup = new L.FeatureGroup();
+    map.addLayer(featureGroup);
+
+    const drawControl = new L.Control.Draw({
+        draw: {
+            polygon: true,
+            rectangle: false,
+            circle: false,
+            marker: true,
+            polyline: true,
+            circlemarker: false
+        },
+        edit: {
+            featureGroup: featureGroup,
+            remove: true
+        }
+    });
+    map.addControl(drawControl);
+
+    map.on('draw:created', function(e) {
+        const layer = e.layer;
+        featureGroup.clearLayers();
+        featureGroup.addLayer(layer);
+        updateWktFromGeometry().then(() => convert());
+    });
+
+    map.on('draw:edited', function(e) {
+        updateWktFromGeometry().then(() => convert());
+    });
+
+    map.on('draw:deleted', function(e) {
+        updateWktFromGeometry();
+        document.getElementById('res').textContent = 'N/A';
+    });
+
+    const errBox = document.getElementById('e');
+    const srcWktBox = document.getElementById('srcWkt');
+    let loadingInterval = null;
+
+    function startLoadingAnimation() {
+        let dots = 0;
+        if (loadingInterval) clearInterval(loadingInterval);
+        loadingInterval = setInterval(() => {
+            dots = (dots + 1) % 4;
+            errBox.textContent = ">>> Calculating altitude" + ".".repeat(dots);
+        }, 500);
+    }
+
+    function stopLoadingAnimation() {
+        if (loadingInterval) {
+            clearInterval(loadingInterval);
+            loadingInterval = null;
+        }
+    }
+
+    async function getAltitude(lat, lon) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            const r = await fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lon}`, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            const d = await r.json();
+            return d.results && d.results[0] ? d.results[0].elevation : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async function updateWktFromGeometry() {
+        const layers = featureGroup.getLayers();
+        if (layers.length === 0) {
+            srcWktBox.value = '';
+            return;
+        }
+
+        const doAlt = document.getElementById('fetchAlt').checked;
+        const features = [];
+        let altErrors = 0;
+        let altAttempts = 0;
+
+        if (doAlt) {
+            startLoadingAnimation();
+        }
+
+        for (const layer of layers) {
+            let feature = null;
+            if (layer instanceof L.Marker) {
+                const lat = layer.getLatLng().lat;
+                const lng = layer.getLatLng().lng;
+                const coords = [lng, lat];
+                if (doAlt) {
+                    altAttempts++;
+                    const alt = await getAltitude(lat, lng);
+                    if (alt !== null) coords.push(alt);
+                    else altErrors++;
+                }
+                feature = {
+                    type: 'Point',
+                    coordinates: coords
+                };
+            } else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+                const coords = layer.getLatLngs().map(ll => [ll.lng, ll.lat]);
+                if (doAlt) {
+                    for (let i = 0; i < coords.length; i++) {
+                        altAttempts++;
+                        const alt = await getAltitude(coords[i][1], coords[i][0]);
+                        if (alt !== null) coords[i].push(alt);
+                        else altErrors++;
+                    }
+                }
+                feature = {
+                    type: 'LineString',
+                    coordinates: coords
+                };
+            } else if (layer instanceof L.Polygon) {
+                const rings = [];
+                const latLngs = layer.getLatLngs()[0];
+                const coords = latLngs.map(ll => [ll.lng, ll.lat]);
+                if (doAlt) {
+                    for (let i = 0; i < coords.length; i++) {
+                        altAttempts++;
+                        const alt = await getAltitude(coords[i][1], coords[i][0]);
+                        if (alt !== null) coords[i].push(alt);
+                        else altErrors++;
+                    }
+                }
+                coords.push(coords[0]);
+                rings.push(coords);
+                feature = {
+                    type: 'Polygon',
+                    coordinates: rings
+                };
+            }
+            if (feature) features.push(feature);
+        }
+
+        stopLoadingAnimation();
+        if (doAlt && altAttempts > 0) {
+            if (altErrors === altAttempts) {
+                errBox.textContent = ">>> WARNING: Altitude service temporarily unavailable. Returned geometries without Z.";
+            } else if (altErrors > 0) {
+                errBox.textContent = `>>> WARNING: Some altitude values could not be retrieved (${altErrors}/${altAttempts} failed).`;
+            } else {
+                errBox.textContent = "";
+            }
+        }
+
+        const wktStrings = features.map(f => geoJsonToWkt(f));
+        srcWktBox.value = wktStrings.join('\n');
+    }
+
+    function geoJsonToWkt(geojson) {
+        const type = geojson.type;
+        const coords = geojson.coordinates;
+
+        if (type === 'Point') {
+            return `POINT(${coords[0]} ${coords[1]})`;
+        } else if (type === 'LineString') {
+            const pts = coords.map(c => `${c[0]} ${c[1]}`).join(', ');
+            return `LINESTRING(${pts})`;
+        } else if (type === 'Polygon') {
+            const rings = coords.map(ring => {
+                const pts = ring.map(c => `${c[0]} ${c[1]}`).join(', ');
+                return `(${pts})`;
+            }).join(', ');
+            return `POLYGON(${rings})`;
+        }
+        return '';
+    }
+
+    function toggleCustom(type) {
+        const sel = document.getElementById(type + 'Select');
+        const cus = document.getElementById(type + 'Custom');
+        cus.className = (sel.value === 'custom') ? '' : 'hidden';
+        if (srcWktBox.value.trim()) {
+            convert();
+        }
+    }
+
+    async function fetchDef(code) {
+        if (staticDefs[code]) return staticDefs[code];
+        try {
+            const r = await fetch(`https://epsg.io/${code}.js`);
+            if (!r.ok) throw new Error();
+            const t = await r.text();
+            const m = t.match(/proj4\.defs\("EPSG:\d+",\s*"(.+?)"\)/);
+            return m ? m[1] : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function getFirstLongitude(wkt) {
+        const match = wkt.match(/[\d\.\-]+/g);
+        return match ? parseFloat(match[0]) : null;
+    }
+
+    function calculateUTMZone(longitude) {
+        const zone = Math.floor((longitude + 180) / 6) + 1;
+        return zone;
+    }
+
+    function parseWkt(wkt) {
+        const wktTrimmed = wkt.trim().toUpperCase();
+        let wktCleaned = wktTrimmed.replace(/\s+/g, ' ');
+        const wktNormalized = wktCleaned.replace(/\s+(Z|M|ZM)\s*/g, ' ');
+        
+        function parsePoint(coords) {
+            const cleaned = coords.replace(/\s+/g, ' ').trim();
+            const parts = cleaned.match(/[\d\.\-]+/g) || [];
+            const result = [parseFloat(parts[0]), parseFloat(parts[1])];
+            if (parts.length > 2) {
+                result.push(parseFloat(parts[2]));
+            }
+            return result;
+        }
+
+        function parseCoordinateList(str) {
+            const coords = [];
+            let current = '';
+            let depth = 0;
+            for (let char of str) {
+                if (char === '(') depth++;
+                else if (char === ')') depth--;
+                else if (char === ',' && depth === 0) {
+                    coords.push(parsePoint(current));
+                    current = '';
+                    continue;
+                }
+                current += char;
+            }
+            if (current.trim()) coords.push(parsePoint(current));
+            return coords;
+        }
+
+        function parseRingList(str) {
+            const rings = [];
+            let current = '';
+            let depth = 0;
+            for (let char of str) {
+                if (char === '(') {
+                    depth++;
+                    if (depth === 1) continue;
+                } else if (char === ')') {
+                    depth--;
+                    if (depth === 0) {
+                        rings.push(parseCoordinateList(current));
+                        current = '';
+                        continue;
+                    }
+                }
+                current += char;
+            }
+            return rings;
+        }
+
+        if (wktNormalized.startsWith('POINT')) {
+            const match = wktNormalized.match(/POINT\s*\(\s*([\d\.\-\s,]+)\s*\)/);
+            if (match) {
+                const coords = parsePoint(match[1]);
+                return { type: 'Feature', geometry: { type: 'Point', coordinates: coords } };
+            }
+        } else if (wktNormalized.startsWith('LINESTRING')) {
+            const match = wktNormalized.match(/LINESTRING\s*\(\s*([\d\.\-\s,]+)\s*\)/);
+            if (match) {
+                const coords = parseCoordinateList(match[1]);
+                return { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } };
+            }
+        } else if (wktNormalized.startsWith('POLYGON')) {
+            const match = wktNormalized.match(/POLYGON\s*\((.*)\)$/s);
+            if (match) {
+                const rings = parseRingList(match[1]);
+                return { type: 'Feature', geometry: { type: 'Polygon', coordinates: rings } };
+            }
+        } else if (wktNormalized.startsWith('MULTIPOINT')) {
+            const match = wktNormalized.match(/MULTIPOINT\s*\((.*)\)$/s);
+            if (match) {
+                const coords = parseCoordinateList(match[1]);
+                return { type: 'Feature', geometry: { type: 'MultiPoint', coordinates: coords } };
+            }
+        } else if (wktNormalized.startsWith('MULTILINESTRING')) {
+            const match = wktNormalized.match(/MULTILINESTRING\s*\((.*)\)$/s);
+            if (match) {
+                const lines = [];
+                let current = '';
+                let depth = 0;
+                for (let char of match[1]) {
+                    if (char === '(') {
+                        depth++;
+                        if (depth === 1) continue;
+                    } else if (char === ')') {
+                        depth--;
+                        if (depth === 0) {
+                            lines.push(parseCoordinateList(current));
+                            current = '';
+                            continue;
+                        }
+                    }
+                    current += char;
+                }
+                return { type: 'Feature', geometry: { type: 'MultiLineString', coordinates: lines } };
+            }
+        } else if (wktNormalized.startsWith('MULTIPOLYGON')) {
+            const match = wktNormalized.match(/MULTIPOLYGON\s*\((.*)\)$/s);
+            if (match) {
+                const polys = [];
+                let current = '';
+                let depth = 0;
+                for (let char of match[1]) {
+                    if (char === '(') {
+                        depth++;
+                        if (depth === 1) continue;
+                    } else if (char === ')') {
+                        depth--;
+                        if (depth === 0) {
+                            polys.push(parseRingList(current));
+                            current = '';
+                            continue;
+                        }
+                    }
+                    current += char;
+                }
+                return { type: 'Feature', geometry: { type: 'MultiPolygon', coordinates: polys } };
+            }
+        }
+        return null;
+    }
+
+    function wktStringify(geometry) {
+        if (!geometry) return '';
+        const type = geometry.type;
+        const coords = geometry.coordinates;
+
+        function formatCoord(c) {
+            return c.length > 2 ? `${c[0]} ${c[1]} ${c[2]}` : `${c[0]} ${c[1]}`;
+        }
+
+        if (type === 'Point') {
+            return `POINT(${formatCoord(coords)})`;
+        } else if (type === 'LineString') {
+            return `LINESTRING(${coords.map(formatCoord).join(', ')})`;
+        } else if (type === 'Polygon') {
+            const rings = coords.map(ring => `(${ring.map(formatCoord).join(', ')})`);
+            return `POLYGON(${rings.join(', ')})`;
+        } else if (type === 'MultiPoint') {
+            return `MULTIPOINT(${coords.map(formatCoord).join(', ')})`;
+        } else if (type === 'MultiLineString') {
+            const lines = coords.map(line => `(${line.map(formatCoord).join(', ')})`);
+            return `MULTILINESTRING(${lines.join(', ')})`;
+        } else if (type === 'MultiPolygon') {
+            const polys = coords.map(poly => {
+                const rings = poly.map(ring => `(${ring.map(formatCoord).join(', ')})`);
+                return `(${rings.join(', ')})`;
+            });
+            return `MULTIPOLYGON(${polys.join(', ')})`;
+        }
+        return '';
+    }
+
+    function transformCoordinates(coords, sDef, sCode, dDef, dCode) {
+        proj4.defs(`EPSG:${sCode}`, sDef);
+        proj4.defs(`EPSG:${dCode}`, dDef);
+        const transformed = proj4(`EPSG:${sCode}`, `EPSG:${dCode}`, coords);
+        if (coords.length > 2 && transformed.length === 2) {
+            transformed.push(coords[2]);
+        }
+        return transformed;
+    }
+
+    function transformWkt(wkt, sDef, sCode, dDef, dCode) {
+        const feature = parseWkt(wkt);
+        if (!feature) return null;
+
+        const geom = feature.geometry;
+
+        function transformGeometry(geom) {
+            if (geom.type === 'Point') {
+                geom.coordinates = transformCoordinates(geom.coordinates, sDef, sCode, dDef, dCode);
+            } else if (geom.type === 'LineString') {
+                geom.coordinates = geom.coordinates.map(c => transformCoordinates(c, sDef, sCode, dDef, dCode));
+            } else if (geom.type === 'Polygon') {
+                geom.coordinates = geom.coordinates.map(ring =>
+                    ring.map(c => transformCoordinates(c, sDef, sCode, dDef, dCode))
+                );
+            } else if (geom.type === 'MultiPoint') {
+                geom.coordinates = geom.coordinates.map(c => transformCoordinates(c, sDef, sCode, dDef, dCode));
+            } else if (geom.type === 'MultiLineString') {
+                geom.coordinates = geom.coordinates.map(line =>
+                    line.map(c => transformCoordinates(c, sDef, sCode, dDef, dCode))
+                );
+            } else if (geom.type === 'MultiPolygon') {
+                geom.coordinates = geom.coordinates.map(poly =>
+                    poly.map(ring =>
+                        ring.map(c => transformCoordinates(c, sDef, sCode, dDef, dCode))
+                    )
+                );
+            }
+        }
+
+        transformGeometry(geom);
+        return wktStringify(geom);
+    }
+
+    function splitWktGeometries(input) {
+        const geometries = [];
+        let current = '';
+        let depth = 0;
+        let inGeometry = false;
+
+        for (let char of input) {
+            if (char === '(') {
+                depth++;
+                inGeometry = true;
+            } else if (char === ')') {
+                depth--;
+            }
+
+            current += char;
+
+            if (inGeometry && depth === 0) {
+                const trimmed = current.trim();
+                if (trimmed) geometries.push(trimmed);
+                current = '';
+                inGeometry = false;
+            }
+        }
+
+        if (current.trim()) geometries.push(current.trim());
+        return geometries;
+    }
+
+    async function convert() {
+        const res = document.getElementById('res');
+        const srcWkt = document.getElementById('srcWkt').value.trim();
+        const sSel = document.getElementById('srcSelect').value;
+        const dSel = document.getElementById('dstSelect').value;
+
+        if (!srcWkt) {
+            res.textContent = 'N/A';
+            errBox.textContent = "";
+            return;
+        }
+
+        let sE = sSel === 'custom' ? document.getElementById('srcCustom').value : sSel;
+        let dE = dSel === 'custom' ? document.getElementById('dstCustom').value : dSel;
+        let utmInfo = "";
+
+        if (dE === 'AUTO_UTM' && sE === '4326') {
+            const wktLines = splitWktGeometries(srcWkt);
+            if (wktLines.length > 0) {
+                const lng = getFirstLongitude(wktLines[0]);
+                if (lng !== null) {
+                    const zone = calculateUTMZone(lng);
+                    dE = (32600 + zone).toString();
+                    utmInfo = `>>> Auto-detected UTM Zone: ${zone}N (EPSG:${dE})`;
+                }
+            }
+        }
+
+        try {
+            const sDef = await fetchDef(sE);
+            const dDef = await fetchDef(dE);
+
+            if (!sDef || !dDef) {
+                errBox.textContent = ">>> ERROR: INVALID SRS CODE";
+                res.textContent = "N/A";
+                return;
+            }
+
+            if (utmInfo) {
+                errBox.textContent = utmInfo;
+            }
+
+            if (!sDef || !dDef) {
+                errBox.textContent = ">>> ERROR: INVALID SRS CODE";
+                res.textContent = "N/A";
+                return;
+            }
+
+            const wktLines = splitWktGeometries(srcWkt);
+            const results = [];
+
+            for (const wkt of wktLines) {
+                const converted = transformWkt(wkt, sDef, sE, dDef, dE);
+                if (converted) {
+                    results.push(converted);
+                } else {
+                    results.push(`ERROR: Invalid WKT - ${wkt}`);
+                }
+            }
+
+            res.textContent = results.join('\n\n');
+            if (!errBox.textContent.includes('WARNING') && !errBox.textContent.includes('Auto-detected')) {
+                errBox.textContent = "";
+            }
+        } catch (err) {
+            console.error('Conversion error:', err);
+            errBox.textContent = ">>> ERROR: CONVERSION FAILED";
+            res.textContent = "N/A";
+        }
+    }
+
+    function clearDrawings() {
+        featureGroup.clearLayers();
+        srcWktBox.value = '';
+    }
+
+    function zoomToGeom() {
+        if (featureGroup.getLayers().length > 0) {
+            map.fitBounds(featureGroup.getBounds());
+        }
+    }
+
+    function copyResult() {
+        const text = document.getElementById('res').textContent;
+        if (text && text !== 'N/A') {
+            navigator.clipboard.writeText(text);
+        }
+    }
+
+    srcWktBox.addEventListener('input', function() {
+        featureGroup.clearLayers();
+        const wktLines = this.value.trim().split('\n').filter(l => l.trim());
+        
+        for (const wkt of wktLines) {
+            try {
+                const feature = parseWkt(wkt);
+                if (feature && feature.geometry) {
+                    const geoJsonLayer = L.geoJSON(feature, {
+                        style: { color: '#00ff41', weight: 2, opacity: 0.7 },
+                        pointToLayer: (feature, latlng) => L.marker(latlng)
+                    });
+                    geoJsonLayer.eachLayer(layer => featureGroup.addLayer(layer));
+                }
+            } catch (e) {
+                console.error('WKT parse error:', e);
+            }
+        }
+        convert();
+    });
+</script>
+</body>
+</html>
