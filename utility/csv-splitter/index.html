@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CSV Splitter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #00ff41; padding: 20px; margin: 0; }
+        .container { max-width: 1000px; margin: auto; }
+        h3 { color: #00ff41; text-transform: uppercase; border-bottom: 1px solid #00ff41; padding-bottom: 5px; margin-top: 0; }
+        
+        .panel { background: #111; border: 1px solid #00ff41; padding: 15px; margin-bottom: 20px; }
+        
+        input[type="file"] { width: 100%; background: #111; color: #00ff41; border: 1px solid #00ff41; padding: 8px; margin-bottom: 8px; box-sizing: border-box; }
+        input[type="number"] { width: 100%; background: #111; color: #00ff41; border: 1px solid #00ff41; padding: 8px; margin-bottom: 8px; box-sizing: border-box; }
+        
+        .radio-group { margin: 10px 0; display: flex; gap: 20px; }
+        .radio-group label { display: flex; align-items: center; gap: 8px; color: #00ff41; cursor: pointer; }
+        .radio-group input[type="radio"] { cursor: pointer; }
+        
+        button { width: 100%; padding: 10px; cursor: pointer; background: #003300; color: #00ff41; border: 1px solid #00ff41; font-weight: bold; text-transform: uppercase; margin-top: 10px; }
+        button:hover { background: #00ff41; color: #000; }
+        button:disabled { background: #1a1a1a; color: #666; cursor: not-allowed; }
+        
+        #e { color: #ffff00; font-weight: bold; margin: 10px 0; min-height: 20px; font-size: 0.85rem; }
+        #e.error { color: #ff4444; }
+        #e.success { color: #44ff44; }
+        
+        .file-info { background: #111; border: 1px solid #333; padding: 10px; margin: 10px 0; font-size: 0.85rem; }
+        
+        .preview { background: #111; border: 1px dashed #00ff41; padding: 10px; margin: 10px 0; font-size: 0.8rem; }
+        
+        .split-result { background: #111; border: 1px solid #333; padding: 10px; margin: 10px 0; }
+        .split-file { padding: 8px; border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+        .split-file:last-child { border-bottom: none; }
+        .split-file button { width: auto; margin: 0; padding: 3px 10px; font-size: 0.75rem; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h3>CSV Splitter Terminal</h3>
+    
+    <div class="panel">
+        <label style="font-size: 0.75rem; color: #888; display: block; margin-bottom: 10px;">SELECT CSV FILE</label>
+        <input type="file" id="csvFile" accept=".csv" />
+        
+        <div id="e"></div>
+        
+        <div class="file-info" id="fileInfo" style="display: none;">
+            <div>File: <span id="fileName">—</span></div>
+            <div>Rows: <span id="totalRows">0</span> (excl. header)</div>
+            <div>Columns: <span id="columnCount">0</span></div>
+        </div>
+
+        <div style="margin: 15px 0;">
+            <label style="font-size: 0.75rem; color: #888; display: block; margin-bottom: 8px;">SPLIT MODE</label>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="splitMode" value="rows" checked onchange="updateSplitMode()">
+                    By Rows per File
+                </label>
+                <label>
+                    <input type="radio" name="splitMode" value="files" onchange="updateSplitMode()">
+                    Into N Files
+                </label>
+            </div>
+        </div>
+
+        <label style="font-size: 0.75rem; color: #888; display: block;" id="inputLabel">Rows per file:</label>
+        <input type="number" id="splitValue" placeholder="1000" value="1000" min="1" />
+
+        <div class="preview" id="preview" style="display: none;">
+            <div id="previewText"></div>
+        </div>
+
+        <button id="splitBtn" onclick="splitCsv()" disabled>SPLIT</button>
+        <button id="resetBtn" onclick="resetAll()" style="background: #330000;">RESET</button>
+    </div>
+
+    <div class="panel" id="resultPanel" style="display: none;">
+        <label style="font-size: 0.75rem; color: #888;">SPLIT RESULTS:</label>
+        <div class="split-result" id="resultList"></div>
+    </div>
+</div>
+
+<script>
+    let csvHeaders = [];
+    let csvRows = [];
+    let splits = [];
+    let originalFileName = '';
+
+    document.getElementById('csvFile').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        originalFileName = file.name.replace('.csv', '').replace('.CSV', '');
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const text = event.target.result;
+                const lines = text.trim().split('\n');
+                
+                if (lines.length < 2) {
+                    showError('CSV must have at least headers and one row');
+                    return;
+                }
+
+                csvHeaders = lines[0].split(',').map(h => h.trim());
+                csvRows = lines.slice(1).filter(l => l.trim()).map(line => line.split(',').map(c => c.trim()));
+
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('totalRows').textContent = csvRows.length;
+                document.getElementById('columnCount').textContent = csvHeaders.length;
+                document.getElementById('fileInfo').style.display = 'block';
+                document.getElementById('splitBtn').disabled = false;
+
+                updatePreview();
+                showSuccess(`Loaded: ${csvRows.length} rows, ${csvHeaders.length} columns`);
+            } catch (err) {
+                showError('Could not read CSV file');
+            }
+        };
+        reader.readAsText(file);
+    });
+
+    function updateSplitMode() {
+        updatePreview();
+        const mode = document.querySelector('input[name="splitMode"]:checked').value;
+        const label = document.getElementById('inputLabel');
+        label.textContent = mode === 'rows' ? 'Rows per file:' : 'Number of files:';
+    }
+
+    function updatePreview() {
+        const mode = document.querySelector('input[name="splitMode"]:checked').value;
+        const value = parseInt(document.getElementById('splitValue').value) || 0;
+        
+        if (csvRows.length === 0 || value <= 0) {
+            document.getElementById('preview').style.display = 'none';
+            return;
+        }
+
+        let numFiles = 0;
+        if (mode === 'rows') {
+            numFiles = Math.ceil(csvRows.length / value);
+        } else {
+            numFiles = Math.min(value, csvRows.length);
+        }
+
+        const preview = document.getElementById('previewText');
+        preview.innerHTML = `Will split into <strong style="color: #ffff00">${numFiles}</strong> file(s)`;
+        document.getElementById('preview').style.display = 'block';
+    }
+
+    document.getElementById('splitValue').addEventListener('input', updatePreview);
+
+    function splitCsv() {
+        const mode = document.querySelector('input[name="splitMode"]:checked').value;
+        const value = parseInt(document.getElementById('splitValue').value);
+
+        if (!value || value <= 0) {
+            showError('Please enter a valid number');
+            return;
+        }
+
+        if (csvRows.length === 0) {
+            showError('No data to split');
+            return;
+        }
+
+        splits = [];
+
+        if (mode === 'rows') {
+            const rowsPerFile = value;
+            for (let i = 0; i < csvRows.length; i += rowsPerFile) {
+                const chunk = csvRows.slice(i, i + rowsPerFile);
+                const fileNum = (splits.length + 1).toString().padStart(3, '0');
+                splits.push({
+                    name: `${originalFileName}_split_${fileNum}.csv`,
+                    rows: chunk,
+                    rowCount: chunk.length
+                });
+            }
+        } else {
+            const numFiles = Math.min(value, csvRows.length);
+            const rowsPerFile = Math.ceil(csvRows.length / numFiles);
+            
+            for (let i = 0; i < numFiles; i++) {
+                const start = i * rowsPerFile;
+                const end = Math.min(start + rowsPerFile, csvRows.length);
+                const chunk = csvRows.slice(start, end);
+                const fileNum = (i + 1).toString().padStart(3, '0');
+                splits.push({
+                    name: `${originalFileName}_split_${fileNum}.csv`,
+                    rows: chunk,
+                    rowCount: chunk.length
+                });
+            }
+        }
+
+        displayResults();
+        showSuccess(`Split into ${splits.length} file(s)`);
+    }
+
+    function displayResults() {
+        const resultList = document.getElementById('resultList');
+        resultList.innerHTML = '';
+
+        if (splits.length > 1) {
+            const downloadAllDiv = document.createElement('div');
+            downloadAllDiv.style.marginBottom = '15px';
+            downloadAllDiv.innerHTML = `
+                <button onclick="downloadAllFiles()" style="background: #00ff41; color: #000; width: 100%;">
+                    DOWNLOAD ALL ${splits.length > 5 ? '(as ZIP)' : 'FILES'}
+                </button>
+            `;
+            resultList.appendChild(downloadAllDiv);
+        }
+
+        splits.forEach((split, idx) => {
+            const div = document.createElement('div');
+            div.className = 'split-file';
+            div.innerHTML = `
+                <span>${split.name} (${split.rowCount} rows)</span>
+                <button onclick="downloadSplit(${idx})" style="background: #003300;">DOWNLOAD</button>
+            `;
+            resultList.appendChild(div);
+        });
+
+        document.getElementById('resultPanel').style.display = 'block';
+    }
+
+    function downloadSplit(idx) {
+        const split = splits[idx];
+        const csv = [csvHeaders.join(',')];
+        split.rows.forEach(row => {
+            csv.push(row.join(','));
+        });
+
+        const csvText = csv.join('\n');
+        const blob = new Blob([csvText], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = split.name;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
+
+    async function downloadAllFiles() {
+        const msgBox = document.getElementById('e');
+        
+        if (splits.length > 5) {
+            msgBox.textContent = '>>> Creating ZIP file...';
+            msgBox.className = '';
+            
+            try {
+                const zip = new JSZip();
+                
+                splits.forEach(split => {
+                    const csv = [csvHeaders.join(',')];
+                    split.rows.forEach(row => {
+                        csv.push(row.join(','));
+                    });
+                    const csvText = csv.join('\n');
+                    zip.file(split.name, csvText);
+                });
+
+                const zipBlob = await zip.generateAsync({ type: 'blob' });
+                const url = window.URL.createObjectURL(zipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${originalFileName}_splits.zip`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+                
+                msgBox.textContent = `>>> Downloaded ${splits.length} files as ZIP`;
+                msgBox.className = 'success';
+            } catch (err) {
+                msgBox.textContent = '>>> Error creating ZIP';
+                msgBox.className = 'error';
+            }
+        } else {
+            msgBox.textContent = `>>> Downloading ${splits.length} files...`;
+            msgBox.className = '';
+            
+            splits.forEach((split, idx) => {
+                setTimeout(() => {
+                    downloadSplit(idx);
+                }, idx * 200);
+            });
+
+            setTimeout(() => {
+                msgBox.textContent = `>>> Downloaded ${splits.length} files`;
+                msgBox.className = 'success';
+            }, splits.length * 200);
+        }
+    }
+
+    function resetAll() {
+        csvHeaders = [];
+        csvRows = [];
+        splits = [];
+        originalFileName = '';
+        document.getElementById('csvFile').value = '';
+        document.getElementById('fileInfo').style.display = 'none';
+        document.getElementById('preview').style.display = 'none';
+        document.getElementById('resultPanel').style.display = 'none';
+        document.getElementById('e').textContent = '';
+        document.getElementById('splitBtn').disabled = true;
+        document.getElementById('splitValue').value = '1000';
+    }
+
+    function showError(msg) {
+        const box = document.getElementById('e');
+        box.textContent = `>>> ERROR: ${msg}`;
+        box.className = 'error';
+    }
+
+    function showSuccess(msg) {
+        const box = document.getElementById('e');
+        box.textContent = `>>> ${msg}`;
+        box.className = 'success';
+    }
+</script>
+
+</body>
+</html>

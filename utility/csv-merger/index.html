@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CSV Merger</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #00ff41; padding: 20px; margin: 0; }
+        .container { max-width: 1000px; margin: auto; }
+        h3 { color: #00ff41; text-transform: uppercase; border-bottom: 1px solid #00ff41; padding-bottom: 5px; margin-top: 0; }
+        
+        .panel { background: #111; border: 1px solid #00ff41; padding: 15px; margin-bottom: 20px; }
+        
+        input[type="file"] { width: 100%; background: #111; color: #00ff41; border: 1px solid #00ff41; padding: 8px; margin-bottom: 8px; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; cursor: pointer; background: #003300; color: #00ff41; border: 1px solid #00ff41; font-weight: bold; text-transform: uppercase; margin-top: 10px; }
+        button:hover { background: #00ff41; color: #000; }
+        button:disabled { background: #1a1a1a; color: #666; cursor: not-allowed; }
+        
+        #e { color: #ffff00; font-weight: bold; margin: 10px 0; min-height: 20px; font-size: 0.85rem; }
+        #e.error { color: #ff4444; }
+        #e.success { color: #44ff44; }
+        
+        .file-list { background: #111; border: 1px solid #333; padding: 10px; margin: 10px 0; min-height: 50px; max-height: 200px; overflow-y: auto; }
+        .file-item { padding: 5px; border-bottom: 1px solid #222; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
+        .file-item:last-child { border-bottom: none; }
+        
+        .file-status { font-size: 0.7rem; color: #888; }
+        .file-status.valid { color: #44ff44; }
+        .file-status.invalid { color: #ff4444; }
+        
+        .remove-btn { background: #330000; color: #ff4444; border: 1px solid #ff4444; padding: 2px 8px; font-size: 0.7rem; cursor: pointer; width: auto; margin: 0; }
+        .remove-btn:hover { background: #ff4444; color: #000; }
+        
+        .stats { background: #111; border: 1px dashed #00ff41; padding: 10px; margin: 10px 0; font-size: 0.85rem; }
+        
+        .button-group { display: flex; gap: 10px; margin-top: 10px; }
+        .button-group button { flex: 1; }
+        
+        .download-btn { background: #003300; }
+        .reset-btn { background: #330000; }
+        
+        .headers-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; margin-top: 10px; }
+        .headers-table th, .headers-table td { border: 1px solid #333; padding: 5px; text-align: left; }
+        .headers-table th { background: #1a1a1a; color: #00ff41; font-weight: bold; }
+        .headers-table .col-num { background: #1a1a1a; color: #888; width: 40px; }
+        .headers-table .valid { background: #0a3a0a; color: #44ff44; }
+        .headers-table .invalid { background: #3a0a0a; color: #ff4444; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h3>CSV Merger Terminal</h3>
+    
+    <div class="panel">
+        <label style="font-size: 0.75rem; color: #888; display: block; margin-bottom: 10px;">SELECT CSV FILES</label>
+        <input type="file" id="csvFiles" multiple accept=".csv" />
+        
+        <div id="e"></div>
+        
+        <div class="file-list" id="fileList">
+            <div style="color: #666; text-align: center; padding: 20px;">No files selected</div>
+        </div>
+        
+        <div class="stats" id="stats" style="display: none;">
+            <div>Files: <span id="fileCount">0</span></div>
+            <div>Total Rows: <span id="totalRows">0</span></div>
+            <div>Columns: <span id="columnCount">0</span></div>
+        </div>
+        
+        <div id="headersPanel" style="display: none;">
+            <label style="font-size: 0.75rem; color: #888; display: block; margin-bottom: 10px; margin-top: 15px;">HEADERS COMPARISON:</label>
+            <div style="background: #0a0a0a; border: 1px solid #333; padding: 10px; overflow-x: auto;">
+                <table class="headers-table" id="headersTable"></table>
+            </div>
+        </div>
+        
+        <div class="button-group">
+            <button id="mergeBtn" onclick="mergeCsvs()" disabled>MERGE</button>
+            <button class="reset-btn" onclick="resetAll()">RESET</button>
+        </div>
+    </div>
+    
+    <div class="panel" id="resultPanel" style="display: none;">
+        <label style="font-size: 0.75rem; color: #888;">MERGED OUTPUT:</label>
+        <div style="background: #0a0a0a; border: 1px solid #333; padding: 10px; max-height: 300px; overflow-y: auto; font-size: 0.75rem; line-height: 1.4;">
+            <pre id="result"></pre>
+        </div>
+        <button class="download-btn" onclick="downloadMerged()">DOWNLOAD MERGED CSV</button>
+    </div>
+</div>
+
+<script>
+    let files = [];
+    let allFiles = [];
+    let csvData = [];
+    let referenceHeaders = null;
+
+    document.getElementById('csvFiles').addEventListener('change', function(e) {
+        files = Array.from(e.target.files);
+        csvData = [];
+        updateFileList();
+        validateAndLoadFiles();
+    });
+
+    function updateFileList() {
+        const fileList = document.getElementById('fileList');
+        if (files.length === 0) {
+            fileList.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No files selected</div>';
+            return;
+        }
+
+        fileList.innerHTML = '';
+        files.forEach((file, idx) => {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.innerHTML = `
+                <span>${file.name}</span>
+                <span class="file-status" id="status-${idx}">Loading...</span>
+                <button class="remove-btn" onclick="removeFile(${idx})">✕</button>
+            `;
+            fileList.appendChild(div);
+        });
+    }
+
+    function removeFile(idx) {
+        files.splice(idx, 1);
+        allFiles.splice(idx, 1);
+        csvData = allFiles.filter(f => f.valid);
+        document.getElementById('csvFiles').value = '';
+        updateFileList();
+        document.getElementById('e').textContent = '';
+        document.getElementById('stats').style.display = 'none';
+        document.getElementById('headersPanel').style.display = 'none';
+        document.getElementById('mergeBtn').disabled = true;
+    }
+
+    async function validateAndLoadFiles() {
+        const msgBox = document.getElementById('e');
+        msgBox.textContent = '>>> Validating files...';
+        msgBox.className = '';
+        
+        allFiles = [];
+        csvData = [];
+        referenceHeaders = null;
+        let allValid = true;
+
+        for (let i = 0; i < files.length; i++) {
+            try {
+                const text = await files[i].text();
+                const lines = text.trim().split('\n');
+                
+                if (lines.length < 1) {
+                    allFiles.push({
+                        headers: [],
+                        rows: [],
+                        filename: files[i].name,
+                        valid: false,
+                        error: 'Empty file'
+                    });
+                    updateStatus(i, 'Empty file', 'invalid');
+                    allValid = false;
+                    continue;
+                }
+
+                const headers = lines[0].split(',').map(h => h.trim());
+                const rows = lines.slice(1).filter(line => line.trim()).map(line => line.split(',').map(cell => cell.trim()));
+
+                allFiles.push({
+                    headers: headers,
+                    rows: rows,
+                    filename: files[i].name,
+                    valid: true,
+                    error: null
+                });
+            } catch (err) {
+                allFiles.push({
+                    headers: [],
+                    rows: [],
+                    filename: files[i].name,
+                    valid: false,
+                    error: 'Read error'
+                });
+                updateStatus(i, 'Read error', 'invalid');
+                allValid = false;
+            }
+        }
+
+        if (!allValid && allFiles.some(f => !f.valid)) {
+            msgBox.textContent = '>>> ERROR: Some files could not be read. Fix errors to continue.';
+            msgBox.className = 'error';
+            document.getElementById('mergeBtn').disabled = true;
+            updateStats();
+            return;
+        }
+
+        const validFiles = allFiles.filter(f => f.headers.length > 0);
+        if (validFiles.length === 0) {
+            msgBox.textContent = '>>> ERROR: No valid CSV files';
+            msgBox.className = 'error';
+            document.getElementById('mergeBtn').disabled = true;
+            return;
+        }
+
+        referenceHeaders = validFiles[0].headers;
+        let schemasMatch = true;
+
+        for (let i = 0; i < allFiles.length; i++) {
+            const file = allFiles[i];
+            
+            if (!file.valid || file.headers.length === 0) continue;
+
+            if (file.headers.length !== referenceHeaders.length) {
+                file.valid = false;
+                file.error = `${file.headers.length} columns (expected ${referenceHeaders.length})`;
+                updateStatus(i, file.error, 'invalid');
+                schemasMatch = false;
+                continue;
+            }
+
+            let mismatchCol = -1;
+            for (let j = 0; j < file.headers.length; j++) {
+                if (file.headers[j] !== referenceHeaders[j]) {
+                    mismatchCol = j;
+                    break;
+                }
+            }
+
+            if (mismatchCol !== -1) {
+                file.valid = false;
+                file.error = `Col ${mismatchCol + 1}: "${file.headers[mismatchCol]}" (expected "${referenceHeaders[mismatchCol]}")`;
+                updateStatus(i, `Col ${mismatchCol + 1} mismatch`, 'invalid');
+                schemasMatch = false;
+            } else {
+                file.valid = true;
+                file.error = null;
+                updateStatus(i, `${file.rows.length} rows`, 'valid');
+                csvData.push(file);
+            }
+        }
+
+        if (schemasMatch && csvData.length === allFiles.length) {
+            msgBox.textContent = `>>> SUCCESS: All ${allFiles.length} files have matching schema`;
+            msgBox.className = 'success';
+            document.getElementById('mergeBtn').disabled = false;
+        } else if (csvData.length > 0) {
+            const validCount = csvData.length;
+            msgBox.textContent = `>>> ERROR: Schema mismatch! Only ${validCount}/${allFiles.length} files match the expected schema`;
+            msgBox.className = 'error';
+            document.getElementById('mergeBtn').disabled = true;
+        } else {
+            msgBox.textContent = '>>> ERROR: No files with valid schema';
+            msgBox.className = 'error';
+            document.getElementById('mergeBtn').disabled = true;
+        }
+
+        updateStats();
+    }
+
+    function updateStatus(idx, status, className) {
+        const statusEl = document.getElementById(`status-${idx}`);
+        if (statusEl) {
+            statusEl.textContent = status;
+            statusEl.className = `file-status ${className}`;
+        }
+    }
+
+    function updateStats() {
+        const totalRows = csvData.reduce((sum, f) => sum + f.rows.length, 0);
+        const columnCount = csvData[0]?.headers.length || 0;
+        
+        document.getElementById('fileCount').textContent = csvData.length;
+        document.getElementById('totalRows').textContent = totalRows;
+        document.getElementById('columnCount').textContent = columnCount;
+        document.getElementById('stats').style.display = 'block';
+        
+        buildHeadersTable();
+    }
+
+    function buildHeadersTable() {
+        const table = document.getElementById('headersTable');
+        const panel = document.getElementById('headersPanel');
+        
+        if (allFiles.length === 0) {
+            panel.style.display = 'none';
+            return;
+        }
+
+        let html = '<tr><th class="col-num">Col</th>';
+        
+        allFiles.forEach(file => {
+            const shortName = file.filename.length > 20 ? file.filename.substring(0, 17) + '...' : file.filename;
+            const statusIcon = file.valid ? '✓' : '✗';
+            const statusColor = file.valid ? '#44ff44' : '#ff4444';
+            const title = file.error ? `${file.filename}\n${file.error}` : file.filename;
+            html += `<th style="max-width: 150px; word-wrap: break-word;" title="${title}"><span style="color: ${statusColor}">${statusIcon}</span> ${shortName}</th>`;
+        });
+        html += '</tr>';
+
+        const maxCols = Math.max(...allFiles.map(f => f.headers.length), 0);
+        for (let col = 0; col < maxCols; col++) {
+            html += `<tr><td class="col-num">${col + 1}</td>`;
+            
+            allFiles.forEach((file, fileIdx) => {
+                const header = file.headers[col] || '—';
+                const refHeader = referenceHeaders ? referenceHeaders[col] : allFiles[0].headers[col];
+                const isMatch = header === refHeader && header !== '—';
+                const className = isMatch ? 'valid' : (header === '—' ? '' : 'invalid');
+                
+                html += `<td class="${className}" title="${header}">${header}</td>`;
+            });
+            
+            html += '</tr>';
+        }
+
+        table.innerHTML = html;
+        panel.style.display = 'block';
+    }
+
+    function mergeCsvs() {
+        if (csvData.length === 0) return;
+
+        const msgBox = document.getElementById('e');
+        msgBox.textContent = '>>> Merging CSV files...';
+        msgBox.className = '';
+
+        try {
+            const headers = csvData[0].headers;
+            const allRows = [];
+
+            csvData.forEach(file => {
+                allRows.push(...file.rows);
+            });
+
+            const mergedCsv = [headers.join(',')];
+            allRows.forEach(row => {
+                mergedCsv.push(row.join(','));
+            });
+
+            const csvText = mergedCsv.join('\n');
+            document.getElementById('result').textContent = csvText;
+            document.getElementById('resultPanel').style.display = 'block';
+
+            msgBox.textContent = `>>> SUCCESS: Merged ${csvData.length} files with ${allRows.length} total rows`;
+            msgBox.className = 'success';
+        } catch (err) {
+            msgBox.textContent = '>>> ERROR: Merge failed';
+            msgBox.className = 'error';
+            console.error(err);
+        }
+    }
+
+    function downloadMerged() {
+        const headers = csvData[0].headers;
+        const allRows = [];
+        csvData.forEach(file => {
+            allRows.push(...file.rows);
+        });
+
+        const mergedCsv = [headers.join(',')];
+        allRows.forEach(row => {
+            mergedCsv.push(row.join(','));
+        });
+
+        const csvText = mergedCsv.join('\n');
+        const blob = new Blob([csvText], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `merged_${new Date().getTime()}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
+
+    function resetAll() {
+        files = [];
+        csvData = [];
+        document.getElementById('csvFiles').value = '';
+        document.getElementById('fileList').innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No files selected</div>';
+        document.getElementById('e').textContent = '';
+        document.getElementById('stats').style.display = 'none';
+        document.getElementById('headersPanel').style.display = 'none';
+        document.getElementById('resultPanel').style.display = 'none';
+        document.getElementById('mergeBtn').disabled = true;
+    }
+</script>
+
+</body>
+</html>
